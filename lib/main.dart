@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:puzzle_8_game/models/puzzle_state.dart';
 import 'package:puzzle_8_game/algorithms/astar_search.dart';
@@ -38,6 +39,12 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
   late PuzzleState currentState;
   Map<String, SearchResult> searchResults = {};
   bool isSearching = false;
+  // Playback controls for automatic step-by-step solution
+  Timer? _playTimer;
+  int _playIndex = 0;
+  bool _isPlayingSolution = false;
+  String? _playingAlgorithm;
+  List<PuzzleState>? _currentSolutionPath;
   String? activeTab;
 
   @override
@@ -134,6 +141,40 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
     }
   }
 
+  void _startPlayingSolution(SearchResult result, String algorithm) {
+    if (!result.isSolution || result.path.isEmpty) return;
+
+    _playTimer?.cancel();
+    _currentSolutionPath = result.path;
+    _playIndex = 0;
+    _playingAlgorithm = algorithm;
+
+    setState(() {
+      _isPlayingSolution = true;
+    });
+
+    _playTimer = Timer.periodic(const Duration(milliseconds: 600), (timer) {
+      if (!mounted) return;
+
+      if (_playIndex >= _currentSolutionPath!.length) {
+        _stopPlayingSolution();
+        return;
+      }
+
+      _updateTile(_currentSolutionPath![_playIndex]);
+      _playIndex++;
+    });
+  }
+
+  void _stopPlayingSolution() {
+    _playTimer?.cancel();
+    _playTimer = null;
+    _playingAlgorithm = null;
+    setState(() {
+      _isPlayingSolution = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -228,7 +269,16 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    ResultsComparison(results: searchResults),
+                    ResultsComparison(
+                      results: searchResults,
+                      activeAlgorithm: activeTab,
+                      playingAlgorithm: _playingAlgorithm,
+                      onPlay: (alg) {
+                        final res = searchResults[alg];
+                        if (res != null) _startPlayingSolution(res, alg);
+                      },
+                      onStop: _stopPlayingSolution,
+                    ),
                     const SizedBox(height: 16),
                     if (activeTab != null && searchResults[activeTab] != null)
                       _buildSolutionPath(searchResults[activeTab]!),
@@ -262,7 +312,7 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
 
   Widget _buildAlgoButton(String label, Color color) {
     return ElevatedButton(
-      onPressed: isSearching ? null : () => _solveWithAlgorithm(label),
+      onPressed: (isSearching || _isPlayingSolution) ? null : () => _solveWithAlgorithm(label),
       style: ElevatedButton.styleFrom(
         backgroundColor: color,
         disabledBackgroundColor: Colors.grey,
@@ -299,7 +349,34 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
           )
         else
           const Text('Nenhuma solução encontrada'),
+        const SizedBox(height: 12),
+        // Play / Stop button for step-by-step automatic moves
+        if (result.isSolution)
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: (_isPlayingSolution && _playingAlgorithm == activeTab)
+                    ? _stopPlayingSolution
+                    : () => _startPlayingSolution(result, activeTab ?? ''),
+                icon: Icon((_isPlayingSolution && _playingAlgorithm == activeTab)
+                    ? Icons.stop
+                    : Icons.play_arrow),
+                label: Text((_isPlayingSolution && _playingAlgorithm == activeTab)
+                    ? 'Parar'
+                    : 'Iniciar reprodução'),
+              ),
+              const SizedBox(width: 8),
+              if (_isPlayingSolution && _playingAlgorithm == activeTab)
+                Text('Reproduzindo passo ${_playIndex}/${result.path.length - 1}'),
+            ],
+          ),
       ],
     );
+  }
+
+  @override
+  void dispose() {
+    _playTimer?.cancel();
+    super.dispose();
   }
 }
